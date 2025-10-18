@@ -8,6 +8,7 @@
 
 import random
 import sys
+import os
 
 sys.path.append("..")  # so other modules can be found in parent dir
 from Player import *
@@ -27,14 +28,15 @@ from AIPlayerUtils import *
 # Parameters:
 #   gameState - a game state
 #   me - the id of me, the current player
+#   util_fn - the utility function to use (will be in AI player class)
 #
 # Return: The utility of the state
 #
-def rootEval(gameState, me):
+def rootEval(gameState, me, util_fn):
     if gameState.whoseTurn == me:
-        return utility(gameState)
+        return util_fn(gameState, me)
     else:
-        return -utility(gameState)
+        return -util_fn(gameState, me)
 
 
 ##
@@ -48,29 +50,30 @@ def rootEval(gameState, me):
 #   alpha - the alpha value for alpha-beta pruning
 #   beta - the beta value for alpha-beta pruning
 #   me - the id of me, the current player
+#   util_fn - the utility function to use (will be in AI player class)
 #
 # Return: A tuple containing (bestValue, bestMove)
 #
-def miniMax(gameState, depth, alpha, beta, me):
+def miniMax(gameState, depth, alpha, beta, me, util_fn):
     if gameState.phase == PLAY_PHASE:
         winner = getWinner(gameState)
         if winner is not None or depth == 0:  # base case
-            return rootEval(gameState, me), None
+            return rootEval(gameState, me, util_fn), None
 
     moves = listAllLegalMoves(gameState)
 
     if not moves:
-        return rootEval(gameState, me), None
+        return rootEval(gameState, me, util_fn), None
     
     # Sort moves for better pruning
     if gameState.whoseTurn == me:
         # Sort descending (best first)
         moves.sort(key=lambda move: rootEval(
-            getNextStateAdversarial(gameState, move), me), reverse=True)
+            getNextStateAdversarial(gameState, move), me, util_fn), reverse=True)
     else:
         # Sort ascending (worst first)
         moves.sort(key=lambda move: rootEval(
-            getNextStateAdversarial(gameState, move), me))
+            getNextStateAdversarial(gameState, move), me, util_fn))
     
     # Limit to top 12 moves for better performance
     moves = moves[:12]
@@ -81,7 +84,7 @@ def miniMax(gameState, depth, alpha, beta, me):
         bestMove = None
         for move in moves:
             newState = getNextStateAdversarial(gameState, move)
-            value, _ = miniMax(newState, depth - 1, alpha, beta, me)
+            value, _ = miniMax(newState, depth - 1, alpha, beta, me, util_fn)
             if value > bestValue:
                 bestValue = value
                 bestMove = move
@@ -99,7 +102,7 @@ def miniMax(gameState, depth, alpha, beta, me):
         bestMove = None
         for move in moves:
             newState = getNextStateAdversarial(gameState, move)
-            value, _ = miniMax(newState, depth - 1, alpha, beta, me)
+            value, _ = miniMax(newState, depth - 1, alpha, beta, me, util_fn)
 
             if value < bestValue:
                 bestValue = value
@@ -112,238 +115,6 @@ def miniMax(gameState, depth, alpha, beta, me):
                 break
 
         return bestValue, bestMove
-
-
-##
-# utility
-#
-# Calculates the utility of a given game state on a scale of 0 to 1
-# Reminder: Do not use the board variable
-#
-# Parameters:
-#   gameState - a game state
-#
-# Return: The utility of the state
-#
-def utility(gameState):
-    # Constants
-    me = gameState.whoseTurn
-    enemy = 1 - me
-    myInv = getCurrPlayerInventory(gameState)
-    enemyInv = getEnemyInv(enemy, gameState)
-    myAnts = getAntList(gameState, me, (WORKER, DRONE, SOLDIER, R_SOLDIER, QUEEN))
-    utility = 0.0
-    
-    # Check for instant win/lose conditions
-    if gameState.phase == PLAY_PHASE:
-        if (getWinner(gameState) == me or 
-                len(getAntList(gameState, enemy, (QUEEN,))) == 0 or
-                myInv.foodCount == FOOD_GOAL or
-                enemyInv.getAnthill().captureHealth == 0):
-            return 100.0  # instant win
-        elif (getWinner(gameState) == enemy or
-              len(myAnts) == 0 or
-              enemyInv.foodCount == FOOD_GOAL or
-              myInv.getAnthill().captureHealth == 0):
-            return 0.0  # instant lose
-
-    # Calculate utility components
-    foodScore = foodUtility(gameState, myInv, enemyInv, me)
-    defenseScore = defenseUtility(gameState, me)
-    attackScore = attackUtility(gameState, myInv, enemyInv, me)
-    
-    utility = foodScore + defenseScore + attackScore
-    return utility
-
-
-##
-# foodUtility
-#
-# Calculates the utility of the food situation in a game state
-# Includes worker utility
-#
-# Parameters:
-#   gameState - a game state
-#   myInv - the inventory of the current player
-#   enemyInv - the inventory of the enemy
-#   me - the id of the current player
-#
-# Return: The utility of the food situation
-#
-def foodUtility(gameState, myInv, enemyInv, me):
-    utility = 0.0
-    # Food Weights - 90% of total utility
-    if myInv.foodCount is not None and enemyInv.foodCount is not None:
-        foodScore = 0.5
-        foodScore += (myInv.foodCount / FOOD_GOAL) * 0.5
-        foodScore -= (enemyInv.foodCount / FOOD_GOAL) * 0.5
-        utility += foodScore * 0.95
-
-        # Worker utility calculation
-        workerScore = 0.0
-        # Get my workers
-        myWorkers = getAntList(gameState, me, (WORKER,))
-        tunnels = myInv.getTunnels()
-        anthill = myInv.getAnthill()
-        foodList = getConstrList(gameState, None, (FOOD,))
-        foodList = [f for f in foodList if (f.coords[1] <= 4)]
-        numWorkers = len(myWorkers)
-
-        # If we have no workers, score is 0
-        if numWorkers == 0:
-            return 0.0
-        
-        # Penalty for too many workers
-        for i in range(len(myWorkers)):
-            if i > 2:
-                utility -= 0.1
-
-        # Calculate worker contributions
-        if numWorkers > 0:
-            # Precompute drop sites
-            dropSites = []
-            if anthill:
-                dropSites.append(anthill.coords)
-            if tunnels:
-                dropSites.extend([t.coords for t in tunnels])
-
-            # Normalization constants keep per-worker contribution in [0,1]
-            MAX_FOOD_DIST = 12.0
-            MAX_DROP_DIST = 12.0
-
-            for i, w in enumerate(myWorkers):
-                contrib = 0.0
-
-                if w.carrying:
-                    # If at drop site: full contribution
-                    if dropSites and any(w.coords == d for d in dropSites):
-                        contrib = 1.0
-                    else:
-                        # Positive baseline for carrying so picking up is attractive
-                        if dropSites:
-                            closestDrop = min(approxDist(w.coords, d) for d in dropSites)
-                            progressToDrop = max(0.0, min(1.0, 
-                                1.0 - (closestDrop / MAX_DROP_DIST)))
-                        else:
-                            progressToDrop = 0.0
-                        # Baseline 0.5 plus progress up to 1.0 max
-                        contrib = 0.5 + 0.5 * progressToDrop
-                else:
-                    # Not carrying: incentivize getting closer to nearest food
-                    if foodList:
-                        closestFood = min(approxDist(w.coords, f.coords) 
-                                        for f in foodList)
-                        towardFood = max(0.0, min(1.0, 
-                            1.0 - (closestFood / MAX_FOOD_DIST)))
-                        contrib = 0.5 * towardFood
-                    else:
-                        contrib = 0.0
-
-                # Clamp and average across workers
-                contrib = max(0.0, min(1.0, contrib))
-                workerScore += contrib / numWorkers
-
-        # Ensure workerScore in [0,1]
-        workerScore = max(0.0, min(1.0, workerScore))
-        utility += (workerScore * 0.03)
-        
-    return utility
-
-
-##
-# defenseUtility
-#
-# Calculates the utility of the defense situation in a game state
-#
-# Parameters:
-#   gameState - a game state
-#   me - the id of the current player
-#
-# Return: The utility of the defense situation
-#
-def defenseUtility(gameState, me):
-    enemy = 1 - me
-    
-    def on_my_side(coords):
-        y = coords[1]
-        return (y <= 4)
-
-    # Enemy ants on my side are threats
-    threats = [a for a in getAntList(gameState, enemy, 
-        (WORKER, DRONE, SOLDIER, R_SOLDIER)) if on_my_side(a.coords)]
-    # My attack-capable ants
-    defenders = getAntList(gameState, me, (DRONE,))
-
-    # If no threats on my side, defense is perfect
-    if not threats:
-        return 1.0
-    # If there are threats but no defenders, defense is bad
-    if not defenders:
-        return 0.0
-
-    # Encourage defenders to be close to threats
-    # 0 distance -> 1.0 score; distance >= maxDist -> 0.0 score
-    MAX_DIST = 14.0
-    total = 0.0
-    for d in defenders:
-        minDist = min(approxDist(d.coords, t.coords) for t in threats)
-        score = 1.0 - (minDist / MAX_DIST)
-        total += score
-
-    proximityScore = total / len(defenders)
-    return proximityScore
-
-
-##
-# attackUtility
-#
-# Calculates the utility of the attack situation in a game state
-#
-# Parameters:
-#   gameState - a game state
-#   myInv - the inventory of the current player
-#   enemyInv - the inventory of the enemy
-#   me - the id of the current player
-#
-# Return: The utility of the attack situation
-#
-def attackUtility(gameState, myInv, enemyInv, me):
-    enemy = 1 - me
-    MAX_DIST = 18.0
-
-    # Helper function to calculate proximity score
-    def proximityScore(ants, enemyAnts):
-        total = 0.0
-        for ant in ants:
-            if enemyAnts:
-                minDist = min(approxDist(ant.coords, enemyAnt.coords) 
-                            for enemyAnt in enemyAnts)
-                score = 1.0 - (minDist / MAX_DIST)
-                total += score
-        return total / len(ants)
- 
-    # Only consider drones for attack utility
-    myAnts = getAntList(gameState, me, (DRONE,))
-    if not myAnts:
-        return 0.0
-    
-    # Get enemy workers as primary targets
-    enemyWorkers = getAntList(gameState, enemy, (WORKER,))
-
-    # Prioritize attacking workers
-    if enemyWorkers:
-        workerProximityScore = proximityScore(myAnts, enemyWorkers)
-        # punish for more workers
-        for w in enemyWorkers:
-            workerProximityScore -= 0.05
-
-        return workerProximityScore
-    
-    # get distance from top right corner of board, limits the amount of moves drone can make
-    TOP_RIGHT_CORNER = (0, 9)
-    topRightCornerScore = 1.0 - (approxDist(myAnts[0].coords, TOP_RIGHT_CORNER) / MAX_DIST)
-    return 2.0 + topRightCornerScore  # no more workers, great
-
 
 ##
 # AIPlayer
@@ -368,6 +139,17 @@ class AIPlayer(Player):
     def __init__(self, inputPlayerId):
         super(AIPlayer, self).__init__(inputPlayerId, "Genetic Algorithm Bot")
         self.playerId = inputPlayerId
+        # Setup instance variables (pretty self-explanatory)
+        self.genePop = []
+        self.nextGene = 0
+        self.fitness = []
+        self.evalCounts = []
+        self.populationSize = 10
+        self.evalGames = 5
+        self.populationFile = os.path.join(os.path.dirname(__file__), '..', 'vo27_krasnogo27_population.txt')
+        self.featureCount = 17
+        self.mutationRate = 0.03 # 3% chance of mutation (may change we'll see)
+        self.initializePopulation()
 
 
     ##
@@ -439,7 +221,7 @@ class AIPlayer(Player):
     #
     def getMove(self, currentState):
         # run miniMax
-        _, move = miniMax(currentState, 3, float('-inf'), float('inf'), self.playerId)
+        _, move = miniMax(currentState, 3, float('-inf'), float('inf'), self.playerId, self.utility)
         return move
 
 
@@ -468,60 +250,217 @@ class AIPlayer(Player):
     #   hasWon - whether the agent won the game
     #
     def registerWin(self, hasWon):
-        # method template, not implemented
+        # TODO
+        # Manage the population of genes
+        # - Update the fitness scores
+        # - Judge whether current gene fitness has been fully evaluated by checking (N games evaluated). If yes, go to next gene
+        # - If all genes have been evaluated, generate a new population
         pass
 
 
-# Unit tests for MinMax AI
-TOTAL_TESTS = 5
-passedTests = 0
+    ##########################
+    # Genetic Algorithm Methods
+    ##########################
 
-# UTILITY TEST
-try:
-    gameState = GameState.getBlankState()
-    util = utility(gameState)
-    if not -10.0 <= util <= 100.0:
-        print(f"ERROR: utility() returned {util}, expected -10.0-100.0")
-    else:
-        passedTests += 1
-except Exception as e:
-    print(f"ERROR: utility() test failed with exception: {e}")
+    ## 
+    # initializePopulation
+    #
+    # Initializes the population of genes
+    #
+    # Return: Saves the population of genes
+    #
+    def initializePopulation(self):
+        # load the population from the file if it exists
+        loaded = []
+        # try to load the population from the file
+        try:
+            if os.path.exists(self.populationFile):
+                with open(self.populationFile, "r") as f:
+                    # read the file line by line
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = [p.strip() for p in line.replace(" ", "").split(",")]
+                        row = [self._clamp(float(p)) for p in parts if p != ""]
+                        if len(row) == self.featureCount:
+                            loaded.append(row)
+            
+            # If file content doesn't match pop size, regenerate - avoids issues in the future if we change the population size
+            if len(loaded) != self.populationSize:
+                loaded = [[random.uniform(-10.0, 10.0) for _ in range(self.featureCount)] for __ in range(self.populationSize)]
+        except Exception:
+            # On any error, regenerate
+            loaded = [[random.uniform(-10.0, 10.0) for _ in range(self.featureCount)] for __ in range(self.populationSize)]
+        self.genePop = loaded
+        self.fitness = [0.0 for _ in range(self.populationSize)]
+        self.evalCounts = [0 for _ in range(self.populationSize)]
+        self.nextGene = 0
+        # save the population to the file
+        self.savePopulation()
+
+        ## 
+        # savePopulation
+        #
+        # saves the population of genes to the population file
+        #
+    def savePopulation(self):
+        with open(self.populationFile, 'w') as f:
+            for gene in self.genePop:
+                # write features to file, 6 decimal places
+                f.write(','.join(f"{g:.6f}" for g in gene) + '\n')
+    
+    ##
+    # mate
+    # 
+    # takes two parent genes and mates them to create two child genes
+    #
+    # Parameters:
+    #   parent1 - the first parent gene
+    #   parent2 - the second parent gene
+    #
+    # Return: Two child genes
+    #
+    def mate(self, parent1, parent2):
+        # mate the genes
+        # cut the genes at a random point in the middle
+        cut = random.randint(2, self.featureCount - 2)
+        child1 = parent1[:cut] + parent2[cut:]
+        child2 = parent2[:cut] + parent1[cut:]
+
+        # mutate the children
+        for i in range(len(child1)):
+            if random.random() < self.mutationRate:
+                child1[i] = random.uniform(-10, 10)
+        for i in range(len(child2)):
+            if random.random() < self.mutationRate:
+                child2[i] = random.uniform(-10, 10)
+        
+        return child1, child2
 
 
-# FOOD UTILITY TEST
-try:
-    gameState = GameState.getBasicState()
-    util = foodUtility(gameState, getCurrPlayerInventory(gameState), 
-                      getEnemyInv(0, gameState), 0)
-    if not -1.0 <= util <= 1.0:
-        print(f"ERROR: foodUtility() returned {util}, expected -1.0-1.0")
-    else:
-        passedTests += 1
-except Exception as e:
-    print(f"ERROR: foodUtility() test failed with exception: {e}")
+    ##
+    # nextGeneration
+    #
+    # generates the next generation of genes and saves them to the population file
+    #
+    # Return: None
+    def nextGeneration(self):
+        # TODO
+        # - Evaluate the fitness of the current generation
+        # - Select the parents for the next generation
+        # - Mate the parents to create the next generation
+        # - Save the next generation to the population file
+        pass
+
+    ##
+    # utility
+    #
+    # Calculates the utility of a given game state. Calculates the features and returns the sum of features
+    #
+    # Parameters:
+    #   gameState - a game state
+    #
+    # Return: The utility of the state
+    #
+    def utility(self, gameState, me):
+        # Constants
+        enemy = 1 - me
+        myInv = getCurrPlayerInventory(gameState)
+        enInv = getEnemyInv(enemy, gameState)
+        
+        # My values
+        myWorkers = getAntList(gameState, me, (WORKER,))
+        myDrones = getAntList(gameState, me, (DRONE,))
+        mySoldiers = getAntList(gameState, me, (SOLDIER,))
+        myRangedSoldiers = getAntList(gameState, me, (R_SOLDIER,))
+        myQueen = getAntList(gameState, me, (QUEEN,))[0] if getAntList(gameState, me, (QUEEN,)) else None
+        myOff = myDrones + mySoldiers + myRangedSoldiers
+        myHill = myInv.getAnthill()
+        myTunnels = myInv.getTunnels()
+
+        # Enemy values
+        enWorkers = getAntList(gameState, enemy, (WORKER,))
+        enDrones = getAntList(gameState, enemy, (DRONE,))
+        enSoldiers = getAntList(gameState, enemy, (SOLDIER,))
+        enRangedSoldiers = getAntList(gameState, enemy, (R_SOLDIER,))
+        enQueen = getAntList(gameState, enemy, (QUEEN,))[0] if getAntList(gameState, enemy, (QUEEN,)) else None
+        enOff = enDrones + enSoldiers + enRangedSoldiers
+        enHill = enInv.getAnthill()
+
+        # Food values
+        foods = getConstrList(gameState, None, (FOOD,))
+
+        # Helper functions
+
+        ##
+        # avgDist
+        #
+        # Finds average distance from a list of ants to a target
+        #
+        # Parameters:
+        #   ants - a list of ants
+        #   target - the target location
+        #
+        # Return: The average distance
+        #
+        def avgDist(ants, target):
+            if not ants or target is None:
+                return 0.0
+            return sum(approxDist(ant.coords, target) for ant in ants) / len(ants)
+
+        ##
+        # avgDistList
+        #
+        # Finds average distance from a list of ants to a list of targets
+        #
+        # Parameters:
+        #   ants - a list of ants
+        #   targets - a list of targets
+        #
+        # Return: The average distance
+        #
+        def avgDistList(ants, targets):
+            if not ants or not targets:
+                return 0.0
+            return sum(avgDist(ants, target) for target in targets) / len(targets)
+        
+        # Features
+        f1 = myInv.foodCount - enInv.foodCount                                  # my food count - enemy food count
+        f2 = myQueen.health - enQueen.health if myQueen and enQueen else 0      # my queen health - enemy queen health
+        f3 = len(myDrones) - len(enDrones)                                      # my drone count - enemy drone count
+        f4 = len(mySoldiers) - len(enSoldiers)                                  # my soldier count - enemy soldier count
+        f5 = len(myWorkers) - len(enWorkers)                                    # my worker count - enemy worker count
+        f6 = len(myRangedSoldiers) - len(enRangedSoldiers)                      # my ranged soldier count - enemy ranged soldier count
+        f7 = avgDist(myOff, enQueen if enQueen else None)                       # average distance from my offensive ants to enemy queen
+        f8 = avgDist(enOff, myQueen.coords if myQueen else None)                # average distance from enemy offensive ants to my queen
+        f9 = 1 if len(myOff) > len(enOff) else 0                                # 1 if I have more offensive ants than my opponent, 0 if I don't
+        f10 = avgDist(myOff, enHill if enHill else None)                        # average distance from my offensive ants to enemy anthill
+        f11 = avgDist(enOff, myHill if myHill else None)                        # average distance from enemy offensive ants to my anthill
+        f12 = 0
+        f13 = 0
+        numCarrying = 0
+        numEmpty = 0
+        for w in myWorkers:
+            if w.carrying:
+                numCarrying += 1
+                f12 += min(approxDist(w.coords, myHill.coords), approxDist(w.coords, myTunnels[0].coords))
+            else:
+                numEmpty += 1
+                f13 += min(approxDist(w.coords, food.coords) for food in foods)
+        f12 = f12 / numCarrying if numCarrying else 0                                     # average distance from workers with food from tunnel or hill (whichever is closer)
+        f13 = f13 / numEmpty if numEmpty else 0                                           # average distance from workers without food from food source (closest food source)
+        f14 = avgDistList(myWorkers, enOff) if myWorkers and enOff else 0                 # average distance from my workers to enemy offensive ants
+        f15 = avgDistList(enWorkers, myOff) if enWorkers and myOff else 0                 # average distance from enemy workers to my offensive ants
+        f16 = approxDist(myQueen.coords, enQueen.coords) if myQueen and enQueen else 0    # distance from my queen to enemy queen
+        f17 = avgDistList(mySoldiers, enSoldiers) if mySoldiers and enSoldiers else 0     # average distance from my soldiers to enemy soldiers
+
+        # return the sum of the features
+        return f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9 + f10 + f11 + f12 + f13 + f14 + f15 + f16 + f17
 
 
-# DEFENSE UTILITY TEST
-try:
-    gameState = GameState.getBasicState()
-    util = defenseUtility(gameState, 0)
-    if not 0.0 <= util <= 1.0:
-        print(f"ERROR: defenseUtility() returned {util}, expected 0.0-1.0")
-    else:
-        passedTests += 1
-except Exception as e:
-    print(f"ERROR: defenseUtility() test failed with exception: {e}")
 
 
-# ATTACK UTILITY TEST
-try:
-    gameState = GameState.getBasicState()
-    myInv = getCurrPlayerInventory(gameState)
-    enemyInv = getEnemyInv(0, gameState)
-    util = attackUtility(gameState, myInv, enemyInv, 0)
-    if not 0.0 <= util <= 3.0:
-        print(f"ERROR: attackUtility() returned {util}, expected 0.0-3.0")
-    else:
-        passedTests += 1
-except Exception as e:
-    print(f"ERROR: attackUtility() test failed with exception: {e}")
+# UNIT TESTS
+
+# Test initialize Population
