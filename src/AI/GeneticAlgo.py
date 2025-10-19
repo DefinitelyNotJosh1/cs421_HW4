@@ -81,40 +81,47 @@ def miniMax(gameState, depth, alpha, beta, me, util_fn):
     # If it's my turn, we want to maximize our score
     if gameState.whoseTurn == me:
         bestValue = float('-inf')
-        bestMove = None
+        bestMoves = []
         for move in moves:
             newState = getNextStateAdversarial(gameState, move)
             value, _ = miniMax(newState, depth - 1, alpha, beta, me, util_fn)
             if value > bestValue:
                 bestValue = value
-                bestMove = move
+                bestMoves = [move]
+            elif abs(value - bestValue) < 0.000001:
+                bestMoves.append(move)
 
             # update alpha
             alpha = max(alpha, bestValue)
             # prune if beta <= alpha
             if beta <= alpha:
                 break
-
-        return bestValue, bestMove
+        
+        move = random.choice(bestMoves) if bestMoves else None
+        return bestValue, move
     # If it's the enemy's turn, we want to minimize our score
     else:
         bestValue = float('inf')
-        bestMove = None
+        bestMoves = []
         for move in moves:
             newState = getNextStateAdversarial(gameState, move)
             value, _ = miniMax(newState, depth - 1, alpha, beta, me, util_fn)
 
             if value < bestValue:
                 bestValue = value
-                bestMove = move
+                bestMoves = [move]
+            elif abs(value - bestValue) < 0.000001:
+                bestMoves.append(move)
 
             # update beta
             beta = min(beta, bestValue)
             # prune if beta <= alpha
             if beta <= alpha:
                 break
-
-        return bestValue, bestMove
+        
+        # Return random move from best moves
+        move = random.choice(bestMoves) if bestMoves else None
+        return bestValue, move
 
 ##
 # AIPlayer
@@ -250,12 +257,25 @@ class AIPlayer(Player):
     #   hasWon - whether the agent won the game
     #
     def registerWin(self, hasWon):
-        # TODO
-        # Manage the population of genes
-        # - Update the fitness scores
-        # - Judge whether current gene fitness has been fully evaluated by checking (N games evaluated). If yes, go to next gene
-        # - If all genes have been evaluated, generate a new population
-        pass
+        # If no population, return
+        if not self.genePop:
+            return
+        
+        # Keep index in bounds
+        index = self.nextGene
+        if index >= self.populationSize:
+            return
+
+        # Update the fitness scores
+        self.fitness[index] += 1.0 if hasWon else 0.0
+        self.evalCounts[index] += 1
+        # Judge whether current gene fitness has been fully evaluated by checking (N games evaluated). If yes, go to next gene
+        if self.evalCounts[self.nextGene] == self.evalGames:
+            self.nextGene += 1
+            # If all genes have been evaluated, generate a new population
+            if self.nextGene == self.populationSize:
+                self.nextGeneration()
+                self.nextGene = 0
 
 
     ##########################
@@ -322,9 +342,9 @@ class AIPlayer(Player):
     # Return: Two child genes
     #
     def mate(self, parent1, parent2):
-        # mate the genes
+        # mate the genes 
         # cut the genes at a random point in the middle
-        cut = random.randint(2, self.featureCount - 2)
+        cut = random.randint(1, self.featureCount - 1)
         child1 = parent1[:cut] + parent2[cut:]
         child2 = parent2[:cut] + parent1[cut:]
 
@@ -346,12 +366,30 @@ class AIPlayer(Player):
     #
     # Return: None
     def nextGeneration(self):
-        # TODO
-        # - Evaluate the fitness of the current generation
-        # - Select the parents for the next generation
-        # - Mate the parents to create the next generation
-        # - Save the next generation to the population file
-        pass
+        # Select the parents for the next generation
+        parents = sorted(zip(self.fitness, self.genePop), key=lambda x: x[0])
+        parents = parents[self.populationSize // 2:]
+
+        # Mate the parents to create the next generation
+        nextGeneration = []
+        pairsNeeded = self.populationSize // 2
+        for i in range(pairsNeeded):
+            p1 = parents[i % len(parents)][1]
+            p2 = parents[(i + 1) % len(parents)][1]
+            c1, c2 = self.mate(p1, p2)
+            nextGeneration.append(c1)
+            nextGeneration.append(c2)
+
+        # Save the next generation to the population file
+        self.genePop = nextGeneration
+        self.savePopulation()
+
+        # Reset the evaluation counts
+        self.evalCounts = [0 for _ in range(self.populationSize)]
+        # Reset the next gene
+        self.nextGene = 0
+        # Reset the fitness scores
+        self.fitness = [0.0 for _ in range(self.populationSize)]
 
     ##
     # utility
