@@ -374,8 +374,8 @@ class AIPlayer(Player):
         nextGeneration = []
         pairsNeeded = self.populationSize // 2
         for i in range(pairsNeeded):
-            p1 = parents[i % len(parents)][1]
-            p2 = parents[(i + 1) % len(parents)][1]
+            p1 = random.choice(parents)[1]
+            p2 = random.choice(parents)[1]
             c1, c2 = self.mate(p1, p2)
             nextGeneration.append(c1)
             nextGeneration.append(c2)
@@ -492,6 +492,25 @@ class AIPlayer(Player):
         f15 = avgDistList(enWorkers, myOff) if enWorkers and myOff else 0                 # average distance from enemy workers to my offensive ants
         f16 = approxDist(myQueen.coords, enQueen.coords) if myQueen and enQueen else 0    # distance from my queen to enemy queen
         f17 = avgDistList(mySoldiers, enSoldiers) if mySoldiers and enSoldiers else 0     # average distance from my soldiers to enemy soldiers
+        
+        # Multiply the features by the weights
+        f1 = f1 * self.genePop[self.nextGene][0]
+        f2 = f2 * self.genePop[self.nextGene][1]
+        f3 = f3 * self.genePop[self.nextGene][2]
+        f4 = f4 * self.genePop[self.nextGene][3]
+        f5 = f5 * self.genePop[self.nextGene][4]
+        f6 = f6 * self.genePop[self.nextGene][5]
+        f7 = f7 * self.genePop[self.nextGene][6]
+        f8 = f8 * self.genePop[self.nextGene][7]
+        f9 = f9 * self.genePop[self.nextGene][8]
+        f10 = f10 * self.genePop[self.nextGene][9]
+        f11 = f11 * self.genePop[self.nextGene][10]
+        f12 = f12 * self.genePop[self.nextGene][11]
+        f13 = f13 * self.genePop[self.nextGene][12]
+        f14 = f14 * self.genePop[self.nextGene][13]
+        f15 = f15 * self.genePop[self.nextGene][14]
+        f16 = f16 * self.genePop[self.nextGene][15]
+        f17 = f17 * self.genePop[self.nextGene][16]
 
         # return the sum of the features
         return f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9 + f10 + f11 + f12 + f13 + f14 + f15 + f16 + f17
