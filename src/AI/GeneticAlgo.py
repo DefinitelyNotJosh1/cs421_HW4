@@ -151,11 +151,11 @@ class AIPlayer(Player):
         self.nextGene = 0
         self.fitness = []
         self.evalCounts = []
-        self.populationSize = 10
-        self.evalGames = 5
+        self.populationSize = 100
+        self.evalGames = 10
         self.populationFile = os.path.join(os.path.dirname(__file__), '..', 'vo27_krasnogo27_population.txt')
         self.featureCount = 17
-        self.mutationRate = 0.03 # 3% chance of mutation (may change we'll see)
+        self.mutationRate = 0.01 # 1% chance of mutation (may change we'll see) 
         self.initializePopulation()
 
 
