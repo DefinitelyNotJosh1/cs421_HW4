@@ -155,11 +155,11 @@ class AIPlayer(Player):
         self.nextGene = 0
         self.fitness = []
         self.evalCounts = []
-        self.populationSize = 50
+        self.populationSize = 20
         self.evalGames = 10
         self.populationFile = os.path.join(os.path.dirname(__file__), '..', 'vo27_krasnogo27_population.txt')
         self.featureCount = 17
-        self.mutationRate = 0.01 # 1% chance of mutation (may change we'll see) 
+        self.mutationRate = 0.05 # 5 chance of mutation (may change we'll see) 
         # Fitness tracking/plotting
         self.fitnessBestHistory = []
         self.fitnessAvgHistory = []
@@ -487,8 +487,8 @@ class AIPlayer(Player):
     def utility(self, gameState, me):
         # Constants
         enemy = 1 - me
-        myInv = getCurrPlayerInventory(gameState)
-        enInv = getEnemyInv(enemy, gameState)
+        myInv = gameState.inventories[me]
+        enInv = gameState.inventories[enemy]
         
         # My values
         myWorkers = getAntList(gameState, me, (WORKER,))
