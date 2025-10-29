@@ -79,8 +79,8 @@ def miniMax(gameState, depth, alpha, beta, me, util_fn):
         moves.sort(key=lambda move: rootEval(
             getNextStateAdversarial(gameState, move), me, util_fn))
     
-    # Limit to top 12 moves for better performance
-    moves = moves[:12]
+    # Limit to top 10 moves for better performance (would like to do more, but it's slow to train otherwise. Oh well)
+    moves = moves[:10]
     
     # If it's my turn, we want to maximize our score
     if gameState.whoseTurn == me:
@@ -101,6 +101,7 @@ def miniMax(gameState, depth, alpha, beta, me, util_fn):
             if beta <= alpha:
                 break
         
+        # Return random move from best moves
         move = random.choice(bestMoves) if bestMoves else None
         return bestValue, move
     # If it's the enemy's turn, we want to minimize our score
@@ -154,12 +155,11 @@ class AIPlayer(Player):
         self.genePop = []
         self.nextGene = 0
         self.fitness = []
-        self.evalCounts = []
-        self.populationSize = 20
+        self.evalCounts = [] # number of games evaluated for each gene
+        self.populationSize = 50
         self.evalGames = 10
         self.populationFile = os.path.join(os.path.dirname(__file__), '..', 'vo27_krasnogo27_population.txt')
         self.featureCount = 17
-        self.mutationRate = 0.05 # 5 chance of mutation (may change we'll see) 
         # Fitness tracking/plotting
         self.fitnessBestHistory = []
         self.fitnessAvgHistory = []
@@ -301,8 +301,8 @@ class AIPlayer(Player):
     def initializePopulation(self):
         # load the population from the file if it exists
         loaded = []
-        # try to load the population from the file
-        try:
+        # try to load the population from the file, if it fails, regenerate the population
+        try: 
             if os.path.exists(self.populationFile):
                 with open(self.populationFile, "r") as f:
                     # read the file line by line
@@ -321,18 +321,22 @@ class AIPlayer(Player):
                             except Exception:
                                 ok = False
                                 break
+                        # if the values are valid and the length is correct, add to the loaded list
                         if ok and len(vals) == self.featureCount:
                             loaded.append(vals)
-            # Normalize to exact population size
+            
+            # Make sure we have the correct number of genes
             if len(loaded) < self.populationSize:
-                # fill shortfall with new random genes
+                # fill shortfall, if any, with new random genes
                 for _ in range(self.populationSize - len(loaded)):
                     loaded.append([random.uniform(-10.0, 10.0) for _ in range(self.featureCount)])
             elif len(loaded) > self.populationSize:
                 loaded = loaded[:self.populationSize]
-        except Exception:
-            # On any error, regenerate full population
+        
+        except Exception: # On any error, regenerate full population
             loaded = [[random.uniform(-10.0, 10.0) for _ in range(self.featureCount)] for __ in range(self.populationSize)]
+
+        # set the population, fitness, evaluation counts, and next gene
         self.genePop = loaded
         self.fitness = [0.0 for _ in range(self.populationSize)]
         self.evalCounts = [0 for _ in range(self.populationSize)]
@@ -344,25 +348,34 @@ class AIPlayer(Player):
         #
         # saves the population of genes to the population file
         #
+        # Return: None
+        #
     def savePopulation(self):
-        # Ensure we have exactly populationSize genes
-        if len(self.genePop) < self.populationSize:
-            for _ in range(self.populationSize - len(self.genePop)):
-                self.genePop.append([random.uniform(-10.0, 10.0) for _ in range(self.featureCount)])
-        elif len(self.genePop) > self.populationSize:
-            self.genePop = self.genePop[:self.populationSize]
-        # Ensure each gene has the right dimensionality
-        normalized = []
-        for gene in self.genePop:
-            if len(gene) != self.featureCount:
-                gene = [random.uniform(-10.0, 10.0) for _ in range(self.featureCount)]
-            normalized.append([float(g) for g in gene])
-        self.genePop = normalized
         with open(self.populationFile, 'w') as f:
             for gene in self.genePop:
                 # write features to file, 6 decimal places
                 f.write(','.join(f"{float(g):.6f}" for g in gene) + '\n')
     
+
+    ##
+    # getMutationRate
+    #
+    # Gets the mutation rate for the current generation. Simple schedule: start high, then decay to ~1% after a few generations.
+    #
+    # Return: The mutation rate
+    #
+    def getMutationRate(self):
+        start = 0.05   # 5% initial
+        floor = 0.01   # 1% floor
+        g = self.generation
+        if g <= 2:      # hold at start for first couple of generations
+            return start
+        if g >= 7:      # decay to floor after a few generations
+            return floor
+        # linear decay between start and floor
+        t = (g - 2) / float(5)
+        return start + (floor - start) * t
+
     ##
     # mate
     # 
@@ -382,11 +395,12 @@ class AIPlayer(Player):
         child2 = parent2[:cut] + parent1[cut:]
 
         # mutate the children
+        rate = self.getMutationRate()
         for i in range(len(child1)):
-            if random.random() < self.mutationRate:
+            if random.random() < rate:
                 child1[i] = random.uniform(-10, 10)
         for i in range(len(child2)):
-            if random.random() < self.mutationRate:
+            if random.random() < rate:
                 child2[i] = random.uniform(-10, 10)
         
         return child1, child2
@@ -398,6 +412,7 @@ class AIPlayer(Player):
     # generates the next generation of genes and saves them to the population file
     #
     # Return: None
+    #
     def nextGeneration(self):
         # Record and plot current generation fitness before evolving
         self.appendAndPlotFitness()
@@ -448,31 +463,35 @@ class AIPlayer(Player):
         # Reset the fitness scores
         self.fitness = [0.0 for _ in range(self.populationSize)]
 
+
+    ##
+    # appendAndPlotFitness
+    #
+    # appends the best/avg fitness to the fitness history and plots it. Makes it easier to track progress.
+    #
+    # Return: None
+    #
     def appendAndPlotFitness(self):
         # append best/avg fitness and overwrite PNG plot
-        try:
-            if not self.fitness or len(self.fitness) == 0:
-                return
-            best = max(self.fitness)
-            avg = sum(self.fitness) / float(len(self.fitness))
-            self.fitnessBestHistory.append(best)
-            self.fitnessAvgHistory.append(avg)
-            self.generation = len(self.fitnessBestHistory)
+        if not self.fitness or len(self.fitness) == 0:
+            return
+        best = max(self.fitness)
+        avg = sum(self.fitness) / float(len(self.fitness))
+        self.fitnessBestHistory.append(best)
+        self.fitnessAvgHistory.append(avg)
+        self.generation = len(self.fitnessBestHistory)
 
-            plt.figure(figsize=(6, 4), dpi=120)
-            plt.plot(self.fitnessBestHistory, label='Best fitness', color='tab:blue')
-            plt.plot(self.fitnessAvgHistory, label='Average fitness', color='tab:orange')
-            plt.xlabel('Generation')
-            plt.ylabel('Fitness')
-            plt.title('Genetic Algorithm Fitness')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(self.fitnessPlotFile)
-            plt.close()
-        except Exception:
-            # ignore plotting issues to not interrupt gameplay
-            pass
+        plt.figure(figsize=(6, 4), dpi=120)
+        plt.plot(self.fitnessBestHistory, label='Best fitness', color='tab:blue')
+        plt.plot(self.fitnessAvgHistory, label='Average fitness', color='tab:orange')
+        plt.xlabel('Generation')
+        plt.ylabel('Fitness')
+        plt.title('Genetic Algorithm Fitness')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.fitnessPlotFile)
+        plt.close()
 
     ##
     # utility
@@ -528,7 +547,9 @@ class AIPlayer(Player):
         def avgDist(ants, target):
             if not ants or target is None:
                 return 0.0
-            return sum(approxDist(ant.coords, target) for ant in ants) / len(ants)
+            # allow target to be an Ant/Construction (has coords) or a raw (x, y) tuple
+            tgt = target.coords if hasattr(target, 'coords') else target
+            return sum(approxDist(ant.coords, tgt) for ant in ants) / len(ants)
 
         ##
         # avgDistList
@@ -553,22 +574,29 @@ class AIPlayer(Player):
         f4 = len(mySoldiers) - len(enSoldiers)                                  # my soldier count - enemy soldier count
         f5 = len(myWorkers) - len(enWorkers)                                    # my worker count - enemy worker count
         f6 = len(myRangedSoldiers) - len(enRangedSoldiers)                      # my ranged soldier count - enemy ranged soldier count
-        f7 = avgDist(myOff, enQueen if enQueen else None)                       # average distance from my offensive ants to enemy queen
+        f7 = avgDist(myOff, enQueen.coords if enQueen else None)                # average distance from my offensive ants to enemy queen
         f8 = avgDist(enOff, myQueen.coords if myQueen else None)                # average distance from enemy offensive ants to my queen
         f9 = 1 if len(myOff) > len(enOff) else 0                                # 1 if I have more offensive ants than my opponent, 0 if I don't
         f10 = avgDist(myOff, enHill if enHill else None)                        # average distance from my offensive ants to enemy anthill
         f11 = avgDist(enOff, myHill if myHill else None)                        # average distance from enemy offensive ants to my anthill
-        f12 = 0
-        f13 = 0
+        f12 = 0 # start at 0
+        f13 = 0 # start at 0
         numCarrying = 0
         numEmpty = 0
         for w in myWorkers:
             if w.carrying:
                 numCarrying += 1
-                f12 += min(approxDist(w.coords, myHill.coords), approxDist(w.coords, myTunnels[0].coords))
+                if myHill:
+                    if myTunnels:
+                        f12 += min(approxDist(w.coords, myHill.coords), approxDist(w.coords, myTunnels[0].coords))
+                    else:
+                        f12 += approxDist(w.coords, myHill.coords)
+                # if no hill somehow, treat as zero contribution
             else:
                 numEmpty += 1
-                f13 += min(approxDist(w.coords, food.coords) for food in foods)
+                if foods:
+                    f13 += min(approxDist(w.coords, food.coords) for food in foods)
+                # if no foods, contribute nothing
         f12 = f12 / numCarrying if numCarrying else 0                                     # average distance from workers with food from tunnel or hill (whichever is closer)
         f13 = f13 / numEmpty if numEmpty else 0                                           # average distance from workers without food from food source (closest food source)
         f14 = avgDistList(myWorkers, enOff) if myWorkers and enOff else 0                 # average distance from my workers to enemy offensive ants
@@ -577,14 +605,14 @@ class AIPlayer(Player):
         f17 = avgDistList(mySoldiers, enSoldiers) if mySoldiers and enSoldiers else 0     # average distance from my soldiers to enemy soldiers
         
         # Multiply the features by the weights
-        # Clamp gene index to valid range to avoid out-of-range errors
-        if not self.genePop:
-            weights = [0.0 for _ in range(self.featureCount)]
-        else:
-            idx = self.nextGene
-            if idx >= len(self.genePop):
-                idx = len(self.genePop) - 1
-            weights = self.genePop[idx]
+        # if not self.genePop:
+        #     weights = [0.0 for _ in range(self.featureCount)]
+        # else:
+        #     idx = self.nextGene
+        #     if idx >= len(self.genePop):
+        #         idx = len(self.genePop) - 1
+        #     weights = self.genePop[idx]
+        weights = [float(w) for w in self.genePop[self.nextGene]]
         f1 = f1 * weights[0]
         f2 = f2 * weights[1]
         f3 = f3 * weights[2]
